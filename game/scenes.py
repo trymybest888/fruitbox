@@ -46,13 +46,32 @@ def _title_text(font, text, color=S.WHITE, outline=(200, 30, 45), px=5):
     return surf
 
 
+_panel_cache = {}
+
+
 def _panel(size, radius=28, color=(255, 255, 255, 240)):
-    """White rounded panel with a soft drop shadow (returned with margins)."""
-    w, h = size
-    surf = pygame.Surface((w + 48, h + 48), pygame.SRCALPHA)
-    surf.blit(soft_shadow((w, h), radius, alpha=90, spread=24), (0, 10))
-    pygame.draw.rect(surf, color, (24, 24, w, h), border_radius=radius)
-    return surf
+    """White rounded panel with a soft drop shadow (returned with margins).
+
+    Cached: the blurred shadow is slow to build in the browser. Callers must
+    not draw on the returned surface (copy it first)."""
+    key = (tuple(size), radius, color)
+    if key not in _panel_cache:
+        w, h = size
+        surf = pygame.Surface((w + 48, h + 48), pygame.SRCALPHA)
+        surf.blit(soft_shadow((w, h), radius, alpha=90, spread=24), (0, 10))
+        pygame.draw.rect(surf, color, (24, 24, w, h), border_radius=radius)
+        _panel_cache[key] = surf
+    return _panel_cache[key]
+
+
+def warm_up(game):
+    """Build the slow, reusable surfaces while the game is loading, so the
+    first round / Settings / Game Over don't hitch (and stutter the music)."""
+    PlayScene(game)                                    # fills assets.cache["play"]
+    _panel((760, 420), color=(255, 255, 255, 255))     # Settings
+    _panel((900, 450))                                 # How to Play
+    for w in (640, 760):                               # Game Over
+        _panel((w, 470), color=(255, 255, 255, 255))
 
 
 # ===========================================================================
@@ -80,6 +99,8 @@ class MenuScene(Scene):
                  (1050, 320), (1180, 500), (1020, 640), (360, 120), (920, 110)]
         self.floaters = [(x, y, rnd.randint(1, 9), rnd.uniform(1.1, 1.6),
                           rnd.uniform(0, math.tau), rnd.uniform(-12, 12)) for x, y in spots]
+        self._floater_cache = {}
+        self._title_cache = {}
         game.audio.start_music()
 
     def _play(self):
@@ -114,12 +135,23 @@ class MenuScene(Scene):
         for i, (x, y, v, sc, ph, rot) in enumerate(self.floaters):
             bob = math.sin(self.t * 1.6 + ph) * 8
             ang = rot + math.sin(self.t * 1.1 + ph) * 6
-            spr = pygame.transform.rotozoom(self.assets.apple(v), ang, sc)
+            key = (i, round(ang))  # rotating per whole degree is plenty smooth
+            spr = self._floater_cache.get(key)
+            if spr is None:
+                spr = self._floater_cache[key] = pygame.transform.rotozoom(self.assets.apple(v), key[1], sc)
             surface.blit(spr, spr.get_rect(center=(x, y + bob)))
 
         intro = ease_out_back(clamp(self.t / 0.7))
         bob = math.sin(self.t * 2.0) * 6
-        blit_center(surface, self.title, (S.SCREEN_W / 2, 158 + bob), scale=max(0.01, intro))
+        # The pop-in scale is rounded to 2% steps and cached (a full-size
+        # smooth-scale of the big title every frame is slow in the browser).
+        step = max(1, round(intro * 50))
+        title = self._title_cache.get(step)
+        if title is None:
+            w, h = self.title.get_size()
+            title = self._title_cache[step] = (self.title if step == 50 else
+                                               pygame.transform.smoothscale(self.title, (max(1, w * step // 50), max(1, h * step // 50))))
+        blit_center(surface, title, (S.SCREEN_W / 2, 158 + bob))
         blit_center(surface, self.subtitle, (S.SCREEN_W / 2, 256), alpha=255 * clamp((self.t - 0.3) / 0.4))
 
         for b in self.buttons:
@@ -385,13 +417,27 @@ class PlayScene(Scene):
         self.gear_btn = IconButton((980, 62), "gear", on_click=self._open_settings)
         self.sound_btn.center = (1042, 62)
         self.home_btn = IconButton((1104, 62), "home", on_click=self._to_menu)
-        self.finish_btn = Button("Finish", (854, 59), self.assets.fonts["button"], "red",
-                                 (130, 46), on_click=self._finish)
 
         f = self.assets.fonts
-        self.txt_ready = _title_text(f["h1"], "Ready?", outline=(52, 120, 222), px=4)
-        self.txt_go = _title_text(f["title"], "GO!", outline=(34, 140, 50), px=5)
         self.crate_pos = (S.BOARD_X - S.BOARD_PAD - 20, S.BOARD_Y - S.BOARD_PAD - 20)
+        # Everything that never changes (lawn, HUD panels, wooden crate) is
+        # baked into one opaque surface: one cheap blit per frame. These are
+        # built on the first round only, so starting a round doesn't hitch.
+        cached = self.assets.cache.get("play")
+        if cached is None:
+            backdrop = self.assets.background.copy()
+            self.score_card.draw_panel(backdrop)
+            self.time_bar.draw_panel(backdrop)
+            backdrop.blit(self.assets.crate, self.crate_pos)
+            cached = self.assets.cache["play"] = (
+                backdrop,
+                _title_text(f["h1"], "Ready?", outline=(52, 120, 222), px=4),
+                _title_text(f["title"], "GO!", outline=(34, 140, 50), px=5),
+                Button("Finish", (854, 59), f["button"], "red", (130, 46)),
+            )
+        self.backdrop, self.txt_ready, self.txt_go, self.finish_btn = cached
+        self.finish_btn.on_click = self._finish
+        self.finish_btn.pressed = self.finish_btn.is_hover = False
 
     # -- helpers ------------------------------------------------------------
     def _to_menu(self):
@@ -404,7 +450,8 @@ class PlayScene(Scene):
             return
         self.game.audio.play("click")
         self._cancel_drag()
-        backdrop = backdrop_blur(self.game.screen.copy())
+        backdrop = (blur(self.game.screen.copy(), 4) if S.IS_WEB
+                    else backdrop_blur(self.game.screen.copy()))
         dim = pygame.Surface(backdrop.get_size(), pygame.SRCALPHA)
         dim.fill((20, 50, 25, 90))
         backdrop.blit(dim, (0, 0))
@@ -530,22 +577,21 @@ class PlayScene(Scene):
         self.time_bar.update(dt)
 
     def draw(self, surface):
-        surface.blit(self.assets.background, (0, 0))
-        self.score_card.draw(surface)
-        self.time_bar.draw(surface, None if self.free_play else self.remaining, S.GAME_TIME)
+        # Backdrop + idle apples come from the board's cached layer; the
+        # selection fill is drawn under the (animated) selected apples.
+        rect = self._selection_rect()
+        show = rect is not None and (rect.w > 2 or rect.h > 2)
+        total = sum(a.value for a in self.selection)
+        self.board.draw(surface, self.assets, base=self.backdrop,
+                        under=(lambda: _draw_selection(surface, rect, total, self.assets, "fill")) if show else None)
+
+        self.score_card.draw(surface, panel=False)
+        self.time_bar.draw(surface, None if self.free_play else self.remaining, S.GAME_TIME, panel=False)
         if self.free_play and self.state == "playing":
             self.finish_btn.draw(surface)
         self.gear_btn.draw(surface)
         self.sound_btn.draw(surface)
         self.home_btn.draw(surface)
-
-        surface.blit(self.assets.crate, self.crate_pos)
-        rect = self._selection_rect()
-        show = rect is not None and (rect.w > 2 or rect.h > 2)
-        total = sum(a.value for a in self.selection)
-        if show:
-            _draw_selection(surface, rect, total, self.assets, "fill")
-        self.board.draw(surface, self.assets)
         if show:
             _draw_selection(surface, rect, total, self.assets, "top", pos=self.drag_pos)
 
@@ -586,7 +632,7 @@ class GameOverScene(Scene):
                              and play.board.has_valid_move())
         f = self.assets.fonts
         # Blurred, darkened picture of the final board as the backdrop
-        self.backdrop = backdrop_blur(snapshot)
+        self.backdrop = blur(snapshot, 4) if S.IS_WEB else backdrop_blur(snapshot)
         shade_layer = pygame.Surface(self.backdrop.get_size(), pygame.SRCALPHA)
         shade_layer.fill((20, 50, 25, 120))
         self.backdrop.blit(shade_layer, (0, 0))
@@ -629,6 +675,7 @@ class GameOverScene(Scene):
         self.t = 0.0
         self.next_confetti = 0.6
         self._num_value, self._num_surf = None, None
+        self._content_done = None
 
     def _continue(self):
         self.game.audio.play("go")
@@ -678,7 +725,15 @@ class GameOverScene(Scene):
         intro = ease_out_back(clamp(self.t / 0.5))
         cx, cy = S.SCREEN_W / 2, S.SCREEN_H / 2 + 10
 
-        # Panel + content scale in together
+        # Panel + content scale in together; once the count-up has finished
+        # the panel no longer changes, so it is cached.
+        content = self._content_done or self._render_content()
+        if self.t >= 1.6 and self._content_done is None:
+            self._content_done = content
+        blit_center(surface, content, (cx, cy), scale=max(0.01, intro))
+        self._draw_extras(surface, cx, cy)
+
+    def _render_content(self):
         content = self.panel.copy()
         pw = content.get_width()
         content.blit(self.title, self.title.get_rect(center=(pw / 2, 92)))
@@ -692,8 +747,9 @@ class GameOverScene(Scene):
         content.blit(self.best_txt, self.best_txt.get_rect(center=(pw / 2, 322)))
         if self.hint:
             content.blit(self.hint, self.hint.get_rect(center=(pw / 2, 362)))
-        blit_center(surface, content, (cx, cy), scale=max(0.01, intro))
+        return content
 
+    def _draw_extras(self, surface, cx, cy):
         if self.new_record and self.t > 1.5:
             pulse = 1 + 0.06 * math.sin(self.t * 6)
             pop = ease_out_back(clamp((self.t - 1.5) / 0.4))

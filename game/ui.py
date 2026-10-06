@@ -79,6 +79,7 @@ class IconButton:
         self.on_click = on_click
         self.hover = 0.0
         self.is_hover = False
+        self._cache = {}  # (icon, hover step) -> rendered surface
 
     def _inside(self, pos):
         return math.dist(pos, self.center) <= self.radius
@@ -97,15 +98,19 @@ class IconButton:
         self.hover += (target - self.hover) * min(1.0, dt * 14)
 
     def draw(self, surface):
-        r = self.radius * (1 + 0.1 * self.hover)
-        size = int(r * 2 + 24)
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
-        c = size / 2
-        pygame.draw.circle(surf, (0, 0, 0, 40), (c, c + 4), r)
-        pygame.draw.circle(surf, (255, 255, 255, 235), (c, c), r)
-        pygame.draw.circle(surf, (*S.INK_SOFT, 60), (c, c), r, 2)
-        col = lerp_color(S.INK, (226, 40, 54), self.hover)
-        self._draw_icon(surf, c, c, r * 0.5, col)
+        key = (self.icon, round(self.hover * 8))
+        surf = self._cache.get(key)
+        if surf is None:
+            hover = key[1] / 8
+            r = self.radius * (1 + 0.1 * hover)
+            size = int(r * 2 + 24)
+            surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            c = size / 2
+            pygame.draw.circle(surf, (0, 0, 0, 40), (c, c + 4), r)
+            pygame.draw.circle(surf, (255, 255, 255, 235), (c, c), r)
+            pygame.draw.circle(surf, (*S.INK_SOFT, 60), (c, c), r, 2)
+            self._draw_icon(surf, c, c, r * 0.5, lerp_color(S.INK, (226, 40, 54), hover))
+            self._cache[key] = surf
         surface.blit(surf, surf.get_rect(center=self.center))
 
     def _draw_icon(self, surf, x, y, s, col):
@@ -142,6 +147,15 @@ class IconButton:
             pygame.draw.line(surf, col, (x - s * 0.4, y), (x + s * 0.3, y + s * 0.7), w)
 
 
+def _hud_panel(size):
+    """White rounded HUD card with a soft shadow (12 px margin all round)."""
+    w, h = size
+    panel = pygame.Surface((w + 24, h + 24), pygame.SRCALPHA)
+    panel.blit(soft_shadow(size, 18, alpha=60, spread=12), (0, 6))
+    pygame.draw.rect(panel, (255, 255, 255, 235), (12, 12, w, h), border_radius=18)
+    return panel
+
+
 class ScoreCard:
     """HUD panel showing the score with a count-up and bump animation."""
 
@@ -150,10 +164,16 @@ class ScoreCard:
         self.assets = assets
         self.shown = 0.0
         self.bump = 0.0
-        self.panel = pygame.Surface((self.rect.w + 24, self.rect.h + 24), pygame.SRCALPHA)
-        self.panel.blit(soft_shadow(self.rect.size, 18, alpha=60, spread=12), (0, 6))
-        pygame.draw.rect(self.panel, (255, 255, 255, 235), (12, 12, *self.rect.size), border_radius=18)
+        self.panel = None  # built on first draw_panel() (usually baked once)
         self.label = assets.fonts["label"].render("SCORE", True, S.INK_SOFT)
+        self._num = (None, None)  # (value, rendered text)
+
+    def draw_panel(self, surface):
+        """Static parts; PlayScene bakes these into its backdrop once."""
+        self.panel = self.panel or _hud_panel(self.rect.size)
+        surface.blit(self.panel, (self.rect.x - 12, self.rect.y - 12))
+        blit_center(surface, self.assets.icon_apple, (self.rect.x + 30, self.rect.centery))
+        surface.blit(self.label, (self.rect.x + 54, self.rect.y + 8))
 
     def update(self, dt, score):
         if score > self.shown + 0.5:
@@ -163,11 +183,13 @@ class ScoreCard:
             self.shown = score
         self.bump = max(0.0, self.bump - dt * 3)
 
-    def draw(self, surface):
-        surface.blit(self.panel, (self.rect.x - 12, self.rect.y - 12))
-        blit_center(surface, self.assets.icon_apple, (self.rect.x + 30, self.rect.centery))
-        surface.blit(self.label, (self.rect.x + 54, self.rect.y + 8))
-        num = self.assets.fonts["hud"].render(str(int(round(self.shown))), True, S.INK)
+    def draw(self, surface, panel=True):
+        if panel:
+            self.draw_panel(surface)
+        value = int(round(self.shown))
+        if self._num[0] != value:  # re-render only when the number changes
+            self._num = (value, self.assets.fonts["hud"].render(str(value), True, S.INK))
+        num = self._num[1]
         scale = 1 + 0.18 * math.sin(self.bump * math.pi) if self.bump > 0 else 1.0
         blit_center(surface, num, (self.rect.x + 54 + num.get_width() / 2,
                                    self.rect.y + 44), scale)
@@ -179,20 +201,26 @@ class TimeBar:
     def __init__(self, rect, assets):
         self.rect = pygame.Rect(rect)
         self.assets = assets
-        self.panel = pygame.Surface((self.rect.w + 24, self.rect.h + 24), pygame.SRCALPHA)
-        self.panel.blit(soft_shadow(self.rect.size, 18, alpha=60, spread=12), (0, 6))
-        pygame.draw.rect(self.panel, (255, 255, 255, 235), (12, 12, *self.rect.size), border_radius=18)
+        self.panel = None  # built on first draw_panel() (usually baked once)
         self.clock = 0.0
+        self.free_title = assets.fonts["button"].render("Free Play", True, (52, 120, 222))
+        self.free_sub = assets.fonts["small"].render("no time limit", True, S.INK_SOFT)
+        self._text = (None, None)  # ((seconds, warn), rendered text)
+
+    def draw_panel(self, surface):
+        """Static background; PlayScene bakes it into its backdrop once."""
+        self.panel = self.panel or _hud_panel(self.rect.size)
+        surface.blit(self.panel, (self.rect.x - 12, self.rect.y - 12))
 
     def update(self, dt):
         self.clock += dt
 
-    def draw(self, surface, remaining, total):
+    def draw(self, surface, remaining, total, panel=True):
         """Draw the bar; `remaining=None` means free play (no time limit)."""
-        surface.blit(self.panel, (self.rect.x - 12, self.rect.y - 12))
+        if panel:
+            self.draw_panel(surface)
         if remaining is None:
-            title = self.assets.fonts["button"].render("Free Play", True, (52, 120, 222))
-            sub = self.assets.fonts["small"].render("no time limit", True, S.INK_SOFT)
+            title, sub = self.free_title, self.free_sub
             x = self.rect.x + 28
             surface.blit(title, title.get_rect(midleft=(x, self.rect.centery)))
             surface.blit(sub, sub.get_rect(midleft=(x + title.get_width() + 16, self.rect.centery + 3)))
@@ -221,14 +249,19 @@ class TimeBar:
             col = lerp_color(col, (255, 150, 150), pulse * 0.5)
         fill_w = int(track.w * frac)
         if fill_w > track.h * 0.3:
-            fill = gradient_rounded_rect((fill_w, track.h), shade(col, 0.2), shade(col, -0.1), track.h // 2)
-            alpha_rect(fill, (255, 255, 255, 70), (4, 3, max(1, fill_w - 8), track.h * 0.35), radius=4)
-            surface.blit(fill, track.topleft)
+            # Plain draw calls (no temporary surfaces): this runs every frame.
+            pygame.draw.rect(surface, shade(col, -0.05), (track.x, track.y, fill_w, track.h),
+                             border_radius=track.h // 2)
+            if fill_w > 16:
+                pygame.draw.rect(surface, shade(col, 0.35), (track.x + 6, track.y + 3, fill_w - 12,
+                                 max(2, int(track.h * 0.32))), border_radius=4)
 
         # Seconds label
         secs = max(0, math.ceil(remaining))
         txt_col = (214, 52, 62) if warn else S.INK
-        text = self.assets.fonts["hud"].render(f"{secs}", True, txt_col)
+        if self._text[0] != (secs, warn):
+            self._text = ((secs, warn), self.assets.fonts["hud"].render(f"{secs}", True, txt_col))
+        text = self._text[1]
         scale = 1.0
         if warn:
             scale = 1 + 0.12 * max(0.0, math.sin((remaining % 1.0) * math.pi))

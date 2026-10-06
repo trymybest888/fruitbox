@@ -350,6 +350,8 @@ class Assets:
         base_normal = render_apple(S.CELL, S.APPLE_NORMAL)
         base_selected = render_apple(S.CELL, S.APPLE_SELECTED)
         self.apples = {}
+        self._scaled = {}
+        self.cache = {}  # scene surfaces built on first use (see PlayScene)
         for value in range(1, 10):
             for selected, base, edge in ((False, base_normal, S.APPLE_NORMAL[3]),
                                          (True, base_selected, S.APPLE_SELECTED[3])):
@@ -358,8 +360,28 @@ class Assets:
                 sprite.blit(num, num.get_rect(center=(S.CELL * 0.5, S.CELL * 0.60)))
                 self.apples[(value, selected)] = sprite.convert_alpha()
 
+        # Pre-scale the sizes the round-start drop-in animation passes through
+        # (0 -> ~110% overshoot) so the first round doesn't hitch.
+        for value in range(1, 10):
+            for step in range(1, 23):
+                self.apple_scaled(value, False, step / 20)
+
         # Small plain apple for the HUD score card
         self.icon_apple = render_apple(28, S.APPLE_NORMAL).convert_alpha()
 
     def apple(self, value, selected=False):
         return self.apples[(value, selected)]
+
+    def apple_scaled(self, value, selected, scale):
+        """Apple sprite at `scale`, rounded to 5% steps and cached, so the
+        drop-in / select / pop animations don't smooth-scale every frame."""
+        step = max(1, round(scale * 20))
+        if step == 20:
+            return self.apples[(value, selected)]
+        key = (value, selected, step)
+        sprite = self._scaled.get(key)
+        if sprite is None:
+            size = max(1, round(S.CELL * step / 20))
+            sprite = pygame.transform.smoothscale(self.apples[(value, selected)], (size, size))
+            self._scaled[key] = sprite
+        return sprite

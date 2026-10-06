@@ -14,19 +14,9 @@ from .storage import SaveData
 
 class Game:
     def __init__(self):
-        # The browser build doesn't load pygame.mixer automatically, so import
-        # it explicitly; any audio failure just means the game runs silently.
-        try:
-            importlib.import_module("pygame.mixer")
-            pygame.mixer.pre_init(44100, -16, 2, 512)
-        except (ImportError, AttributeError, pygame.error):
-            pass
+        self._init_audio_device()
         pygame.init()
-        try:
-            importlib.import_module("pygame.mixer")
-            pygame.mixer.init()
-        except (ImportError, AttributeError, pygame.error):
-            pass
+        self._init_audio_device()
 
         # SCALED keeps the 1280x720 layout and lets F11 go fullscreen cleanly.
         # pygame defaults SCALED to nearest-neighbour upscaling, which looks
@@ -60,8 +50,35 @@ class Game:
         self.fade_layer = pygame.Surface((S.SCREEN_W, S.SCREEN_H))
         self.fade_layer.fill((26, 60, 34))
 
-        from .scenes import MenuScene  # local import avoids a circular import
+        from .scenes import MenuScene, warm_up  # local import avoids a circular import
+        warm_up(self)
         self.scene = MenuScene(self)
+
+    @staticmethod
+    def _init_audio_device():
+        """Open the mixer at 44.1 kHz with a buffer big enough not to stutter.
+
+        A small buffer runs dry whenever one frame takes a little longer
+        (e.g. a scene fade), and the music crackles. In the browser audio is
+        mixed on the same thread as the game, so it gets an even bigger
+        buffer; the browser may also pick 96 kHz by default, which doubles
+        the mixing work, so any other rate is reopened at 44.1 kHz.
+        The browser build doesn't load pygame.mixer automatically, so import
+        it explicitly; any audio failure just means the game runs silently.
+        """
+        freq, buffer = 44100, (4096 if S.IS_WEB else 2048)
+        try:
+            mixer = importlib.import_module("pygame.mixer")
+            current = mixer.get_init()
+            if current is None:
+                mixer.pre_init(freq, -16, 2, buffer)
+                if pygame.get_init():
+                    mixer.init(freq, -16, 2, buffer)
+            elif current[0] != freq:
+                mixer.quit()
+                mixer.init(freq, -16, 2, buffer)
+        except (ImportError, AttributeError, pygame.error):
+            pass
 
     # -- scene management ---------------------------------------------------
     def change_scene(self, factory):
