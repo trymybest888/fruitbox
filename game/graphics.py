@@ -358,8 +358,7 @@ class Assets:
                 sprite.blit(num, num.get_rect(center=(S.CELL * 0.5, S.CELL * 0.60)))
                 self.apples[(value, selected)] = sprite.convert_alpha()
 
-        # Bigger plain apples for menus / icons
-        self.big_apple = render_apple(150, S.APPLE_NORMAL).convert_alpha()
+        # Small plain apple for the HUD score card
         self.icon_apple = render_apple(28, S.APPLE_NORMAL).convert_alpha()
 
     def apple(self, value, selected=False):

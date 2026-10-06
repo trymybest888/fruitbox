@@ -63,12 +63,13 @@ class MenuScene(Scene):
         super().__init__(game)
         f = self.assets.fonts
         cx = S.SCREEN_W // 2
-        self.buttons = [
-            Button("Play", (cx, 342), f["button"], "green", on_click=self._play),
-            Button("How to Play", (cx, 420), f["button"], "yellow", on_click=self._howto),
-            Button("Settings", (cx, 498), f["button"], "blue", on_click=self._settings),
-            Button("Quit", (cx, 576), f["button"], "red", on_click=game.quit),
-        ]
+        items = [("Play", "green", self._play), ("How to Play", "yellow", self._howto),
+                 ("Settings", "blue", self._settings)]
+        if not S.IS_WEB:  # a browser tab can't quit itself
+            items.append(("Quit", "red", game.quit))
+        y0 = 342 + (4 - len(items)) * 39  # keep the column centred
+        self.buttons = [Button(text, (cx, y0 + i * 78), f["button"], theme, on_click=cb)
+                        for i, (text, theme, cb) in enumerate(items)]
         self.title = _title_text(f["title"], "Fruit Box")
         self.subtitle = shadow_text(f["body"], "Drag a box  •  Make 10  •  Pop the apples!",
                                     S.WHITE, alpha=80, offset=(0, 2))
@@ -152,7 +153,10 @@ class HowToScene(Scene):
         self.title = _title_text(f["h1"], "How to Play", px=4)
         self.panel = _panel((900, 450))
         self.lines = [f["body"].render(s, True, S.INK) for s in self.STEPS]
-        self.keys = f["small"].render("ESC  back to menu      M  sound on/off      F11  fullscreen",
+        keys = "ESC  back to menu      M  sound on/off"
+        if not S.IS_WEB:
+            keys += "      F11  fullscreen"
+        self.keys = f["small"].render(keys,
                                       True, S.INK_SOFT)
         self.buttons = [
             Button("Back", (S.SCREEN_W // 2 - 160, 650), f["button"], "yellow", (260, 62), self._back),
@@ -610,8 +614,9 @@ class GameOverScene(Scene):
         self.buttons += [
             Button("Play Again", (0, y), f["button"], "green", (210, 62), self._again),
             Button("Menu", (0, y), f["button"], "yellow", (140, 62), self._menu),
-            Button("Quit", (0, y), f["button"], "red", (110, 62), game.quit),
         ]
+        if not S.IS_WEB:
+            self.buttons.append(Button("Quit", (0, y), f["button"], "red", (110, 62), game.quit))
         # Centre the row of buttons
         widths = [b.size[0] for b in self.buttons]
         x = cx - (sum(widths) + 20 * (len(widths) - 1)) / 2
@@ -623,6 +628,7 @@ class GameOverScene(Scene):
         self.particles = ParticleSystem()
         self.t = 0.0
         self.next_confetti = 0.6
+        self._num_value, self._num_surf = None, None
 
     def _continue(self):
         self.game.audio.play("go")
@@ -678,7 +684,10 @@ class GameOverScene(Scene):
         content.blit(self.title, self.title.get_rect(center=(pw / 2, 92)))
         content.blit(self.label, self.label.get_rect(center=(pw / 2, 166)))
         shown = int(round(self.score * ease_out_cubic(clamp((self.t - 0.3) / 1.2))))
-        num = outlined_text(self.assets.fonts["title"], str(shown), (226, 40, 54), S.WHITE, 3)
+        if shown != self._num_value:
+            self._num_value = shown
+            self._num_surf = outlined_text(self.assets.fonts["title"], str(shown), (226, 40, 54), S.WHITE, 3)
+        num = self._num_surf
         content.blit(num, num.get_rect(center=(pw / 2, 240)))
         content.blit(self.best_txt, self.best_txt.get_rect(center=(pw / 2, 322)))
         if self.hint:

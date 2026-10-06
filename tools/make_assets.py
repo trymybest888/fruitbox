@@ -1,12 +1,12 @@
 """Generate the game's sound effects, background music and window icon.
 
-All audio is synthesised in pure Python (no external files or licences
-needed). Run from the project root:
+All audio is synthesised in Python (no external files or licences needed)
+and saved as OGG via the `soundfile` package (pip install soundfile). Run from the project root:
 
     python tools/make_assets.py
 
 Outputs:
-    assets/sounds/clear.wav, click.wav, tick.wav, timeup.wav, go.wav, bgm.wav
+    assets/sounds/clear.ogg, click.ogg, tick.ogg, timeup.ogg, go.ogg, bgm.ogg
     assets/icon.ico
 """
 
@@ -16,7 +16,6 @@ import os
 import random
 import struct
 import sys
-import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOUND_DIR = os.path.join(ROOT, "assets", "sounds")
@@ -76,16 +75,15 @@ def mix(dst, src, start, wrap=False):
         dst[j] += s
 
 
-def write_wav(name, samples, sr, peak=0.85):
-    top = max(1e-9, max(abs(s) for s in samples))
-    gain = peak / top
-    frames = b"".join(struct.pack("<h", int(max(-1, min(1, s * gain)) * 32767)) for s in samples)
+def write_audio(name, samples, sr, peak=0.85):
+    """Normalise and save as OGG Vorbis (small, and plays in browsers too)."""
+    import numpy as np
+    import soundfile as sf
+
+    data = np.asarray(samples, dtype=np.float32)
+    data *= peak / max(1e-9, float(np.abs(data).max()))
     path = os.path.join(SOUND_DIR, name)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sr)
-        w.writeframes(frames)
+    sf.write(path, data, sr, format="OGG", subtype="VORBIS")
     print(f"  wrote {os.path.relpath(path, ROOT)}  ({len(samples) / sr:.2f}s)")
 
 
@@ -99,20 +97,20 @@ def make_sfx():
     clear = sweep(260, 900, 0.07, sr, vol=0.9, decay=35)
     for k, n in enumerate([76, 79, 84, 88]):
         mix(clear, bell(midi(n), 0.55, sr, vol=0.45, decay=7), int((0.04 + k * 0.05) * sr))
-    write_wav("clear.wav", clear, sr)
+    write_audio("clear.ogg", clear, sr)
 
     # click: short friendly blip for buttons
-    write_wav("click.wav", sweep(700, 1300, 0.07, sr, decay=45), sr, peak=0.7)
+    write_audio("click.ogg", sweep(700, 1300, 0.07, sr, decay=45), sr, peak=0.7)
 
     # tick: woodblock-like tick for the final seconds
     tick = bell(midi(96), 0.08, sr, decay=60)
     mix(tick, bell(midi(84), 0.08, sr, vol=0.5, decay=70), 0)
-    write_wav("tick.wav", tick, sr, peak=0.6)
+    write_audio("tick.ogg", tick, sr, peak=0.6)
 
     # go: two quick rising notes
     go = bell(midi(72), 0.25, sr, decay=10)
     mix(go, bell(midi(79), 0.45, sr, decay=6), int(0.12 * sr))
-    write_wav("go.wav", go, sr, peak=0.7)
+    write_audio("go.ogg", go, sr, peak=0.7)
 
     # timeup: descending chime ending on a long low note
     up = []
@@ -120,7 +118,7 @@ def make_sfx():
         mix(up, bell(midi(n), 0.4, sr, decay=8), int(k * 0.16 * sr))
     mix(up, bell(midi(67), 1.2, sr, decay=3), int(0.5 * sr))
     mix(up, bell(midi(55), 1.2, sr, vol=0.5, decay=3), int(0.5 * sr))
-    write_wav("timeup.wav", up, sr)
+    write_audio("timeup.ogg", up, sr)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +155,7 @@ def make_music():
             vol = 0.10 + rnd.uniform(-0.015, 0.015)
             mix(out, bell(midi(tones[idx]), 0.6, sr, vol=vol, decay=5.5),
                 int((t0 + k * beat / 2) * sr), wrap=True)  # wrap -> seamless loop
-    write_wav("bgm.wav", out, sr, peak=0.7)
+    write_audio("bgm.ogg", out, sr, peak=0.7)
 
 
 # ---------------------------------------------------------------------------

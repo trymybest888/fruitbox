@@ -2,9 +2,13 @@
 
 Run from source:   python main.py
 Build the .exe:    build.bat   (see README.md)
+Web build:         python tools/build_web.py
 """
 
+import asyncio
 import sys
+
+import pygame  # noqa: F401  (pygbag scans main.py's imports to know it must load pygame)
 
 
 def enable_dpi_awareness():
@@ -19,11 +23,11 @@ def enable_dpi_awareness():
         pass
 
 
-def main():
+async def main():
     enable_dpi_awareness()
     from game.core import Game
-    Game().run()
+    await Game().run()
 
 
-if __name__ == "__main__":
-    main()
+# pygbag (web build) requires asyncio.run(main()) at the top level of main.py
+asyncio.run(main())

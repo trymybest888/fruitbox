@@ -8,13 +8,13 @@ from .resources import asset_path
 
 # name -> (file, base volume). Final volume = base * master * sfx level.
 SFX_FILES = {
-    "clear": ("clear.wav", 0.55),
-    "click": ("click.wav", 0.45),
-    "tick": ("tick.wav", 0.5),
-    "timeup": ("timeup.wav", 0.6),
-    "go": ("go.wav", 0.5),
+    "clear": ("clear.ogg", 0.55),
+    "click": ("click.ogg", 0.45),
+    "tick": ("tick.ogg", 0.5),
+    "timeup": ("timeup.ogg", 0.6),
+    "go": ("go.ogg", 0.5),
 }
-MUSIC_FILE = "bgm.wav"
+MUSIC_FILE = "bgm.ogg"
 MUSIC_VOLUME = 0.35  # base music volume; final = base * master * music level
 
 
@@ -22,7 +22,8 @@ class AudioManager:
     def __init__(self, enabled=True, master=1.0, music=1.0, sfx=1.0):
         self.enabled = enabled
         self.master, self.music, self.sfx = master, music, sfx
-        self.available = pygame.mixer.get_init() is not None
+        mixer = getattr(pygame, "mixer", None)
+        self.available = mixer is not None and mixer.get_init() is not None
         self.sounds = {}
         self.base_volume = {}
         self.music_loaded = False

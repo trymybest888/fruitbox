@@ -1,5 +1,10 @@
 """Global constants: window, board layout, timing and colour palette."""
 
+import sys
+
+# True when running in the browser via pygbag (Python compiled to WebAssembly)
+IS_WEB = sys.platform == "emscripten"
+
 # --- Window -----------------------------------------------------------------
 SCREEN_W, SCREEN_H = 1280, 720
 FPS = 60

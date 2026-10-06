@@ -1,0 +1,5 @@
+# Only needed to rebuild assets or the web version (not to play)
+-r requirements.txt
+pygbag==0.9.3
+soundfile
+numpy

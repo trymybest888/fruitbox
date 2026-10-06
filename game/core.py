@@ -1,5 +1,7 @@
 """Game: window setup, main loop at 60 FPS and fade transitions between scenes."""
 
+import asyncio
+import importlib
 import os
 
 import pygame
@@ -12,21 +14,37 @@ from .storage import SaveData
 
 class Game:
     def __init__(self):
-        pygame.mixer.pre_init(44100, -16, 2, 512)
+        # The browser build doesn't load pygame.mixer automatically, so import
+        # it explicitly; any audio failure just means the game runs silently.
+        try:
+            importlib.import_module("pygame.mixer")
+            pygame.mixer.pre_init(44100, -16, 2, 512)
+        except (ImportError, AttributeError, pygame.error):
+            pass
         pygame.init()
         try:
+            importlib.import_module("pygame.mixer")
             pygame.mixer.init()
-        except pygame.error:
-            pass  # no audio device: the game still runs silently
+        except (ImportError, AttributeError, pygame.error):
+            pass
 
         # SCALED keeps the 1280x720 layout and lets F11 go fullscreen cleanly.
         # pygame defaults SCALED to nearest-neighbour upscaling, which looks
         # jagged at non-integer ratios (e.g. 1.5x on a 1080p screen); ask SDL
         # for linear filtering instead. The env var outranks pygame's default.
         os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "linear")
-        self.screen = pygame.display.set_mode((S.SCREEN_W, S.SCREEN_H), pygame.SCALED)
+        # In the browser pygbag scales the canvas itself, so no SCALED flag there.
+        flags = 0 if S.IS_WEB else pygame.SCALED
+        self.screen = pygame.display.set_mode((S.SCREEN_W, S.SCREEN_H), flags)
         pygame.display.set_caption(S.TITLE)
         pygame.display.set_icon(render_apple(64, S.APPLE_NORMAL))
+        if S.IS_WEB:
+            # pygbag sized the page canvas before we picked 1280x720; ask its
+            # page script to re-fit the canvas so it isn't squashed.
+            try:
+                __import__("platform").window.window_resize()
+            except Exception:
+                pass
 
         self.clock = pygame.time.Clock()
         self.save = SaveData.load()
@@ -87,14 +105,16 @@ class Game:
         self.running = False
 
     # -- main loop ----------------------------------------------------------
-    def run(self):
+    async def run(self):
+        """Main loop. It is async so the same code runs in the browser:
+        `await asyncio.sleep(0)` hands control back to the page each frame."""
         while self.running:
             # Clamp dt so a dragged/paused window doesn't cause huge jumps.
             dt = min(self.clock.tick(S.FPS) / 1000.0, 1 / 20)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11 and not S.IS_WEB:
                     pygame.display.toggle_fullscreen()
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                     self.toggle_sound()
@@ -108,4 +128,5 @@ class Game:
                 self.fade_layer.set_alpha(int(255 * self.fade))
                 self.screen.blit(self.fade_layer, (0, 0))
             pygame.display.flip()
+            await asyncio.sleep(0)
         pygame.quit()
