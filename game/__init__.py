@@ -1,0 +1,1 @@
+"""Fruit Box game package."""
